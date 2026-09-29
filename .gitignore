@@ -1,0 +1,47 @@
+cat > .gitignore <<'EOF'
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Env / secrets
+.env
+.env.*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Data & artifacts (тяжёлые файлы)
+*.parquet
+*.csv
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.ckpt
+*.joblib
+*.npy
+*.npz
+*.zip
+*.tar.gz
+
+# MLflow / DVC / logs
+mlruns/
+logs/
+*.log
+EOF

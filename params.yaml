@@ -1,0 +1,10 @@
+# params.yaml
+name_csv: 'initial_data.csv'
+name_db_first_dag: 'data_combined'
+name_db_second_dag: 'data_combined_after_transform'
+one_hot_drop: 'if_binary'
+auto_class_weights: 'Balanced'
+n_splits: 5
+metrics: ['RMSE', 'MAPE']
+n_jobs: -1
+target: "price"

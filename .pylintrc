@@ -1,0 +1,13 @@
+[MESSAGES CONTROL]
+disable=all
+enable=
+    unused-import,          # неиспользуемые импорты
+    unused-variable,        # неиспользуемые переменные (W0612)
+    unused-argument,        # неиспользуемые аргументы функции (W0613)
+    unused-private-member,  # неиспользуемые приватные члены класса
+    unreachable,            # недостижимый код
+    pointless-statement,    # бессмысленные выражения
+    redefined-outer-name    # переопределение внешней переменной
+[VARIABLES]
+# Имена, начинающиеся с _ или dummy, не считаются «неиспользуемыми»
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignore_
