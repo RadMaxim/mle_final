@@ -88,6 +88,22 @@ x-airflow-common:
       condition: service_healthy
 
 services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: DockerfileMLflow
+
+    env_file:
+      - ./.env
+
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: https://storage.yandexcloud.net
+    
+
+    ports:
+      - "5000:5000"
+
+    restart: unless-stopped
   main-app:  
     #используем файл с переменными среды
     env_file:

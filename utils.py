@@ -313,3 +313,11 @@ def compare_parquet_memory(
     result = pd.DataFrame(results)
 
     return result
+
+def show_missing_by_columns(df):
+    result = pd.DataFrame({
+        "null_count": df.isna().sum(),
+        "null_percent": (df.isna().mean() * 100).round(2)
+    })
+
+    return result[result["null_count"] > 0]
