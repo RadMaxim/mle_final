@@ -3,6 +3,7 @@ paths:
   parquet_dir: /opt/airflow/data/parquet
   cleaned_dir: /opt/airflow/data/cleaned
 
+
 preprocessing:
   constant_properties:
     - "159"
@@ -11,16 +12,49 @@ preprocessing:
 
   parquet_compression: SNAPPY
 
+
 s3:
   endpoint_url: https://storage.yandexcloud.net
+
   data_prefix: recsys/data
+  recommendations_prefix: recsys/recommendations
 
   files:
     events: events.parquet
     item_properties: item_properties.parquet
     category_tree: category_tree.parquet
 
+
 airflow:
   owner: mle-user
   retries: 2
   retry_delay_minutes: 2
+
+
+recommendations:
+  work_dir: /opt/airflow/data/recommendations
+
+  top_n: 100
+  similar_n: 50
+
+  personal_batch_size: 100000
+  similar_batch_size: 20000
+
+
+als:
+  factors: 32
+  regularization: 0.05
+  alpha: 10
+  iterations: 15
+  random_state: 42
+  calculate_training_loss: true
+
+
+split:
+  evaluation_days: 7
+  ranker_days: 7
+
+
+mlflow:
+  tracking_uri: http://mlflow:5000
+  experiment_name: recsys_als

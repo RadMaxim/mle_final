@@ -1,6 +1,16 @@
-# Dockerfile
+FROM apache/airflow:2.7.3-python3.10
 
-FROM apache/airflow:2.7.3-python3.10 
-COPY requirements.txt ./tmp/requirements.txt
-RUN pip install -U pip
-RUN pip install -r ./tmp/requirements.txt 
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libgomp1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+COPY airflow_requirements.txt /tmp/airflow_requirements.txt
+
+RUN pip install --no-cache-dir \
+    -r /tmp/airflow_requirements.txt

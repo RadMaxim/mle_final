@@ -82,7 +82,7 @@ contourpy==1.2.0
 crashtest==0.4.1
 cron_descriptor==1.4.0
 croniter==2.0.1
-cryptography==41.0.7
+cryptography==43.0.3
 cycler==0.12.1
 debugpy==1.8.1
 decorator==5.1.1
@@ -271,3 +271,5 @@ yarl==1.9.3
 zc.lockfile==3.0.post1
 zipp==3.17.0
 duckdb==1.4.1
+mlflow==3.16.1
+implicit==0.7.2
