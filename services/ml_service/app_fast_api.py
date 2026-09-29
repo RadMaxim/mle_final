@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 
 from ml_service.fast_api_handler import FastApiHandler
-from ml_service.recommendation_prediction_input import (
-    RecommendationPredictionInput
+
+from prometheus_fastapi_instrumentator import (
+    Instrumentator
 )
 
-from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Histogram
 
 
@@ -51,29 +51,20 @@ app.handler = FastApiHandler()
 # Recommendation endpoint
 # --------------------------------------------------
 
-@app.post("/api/recommendation/")
+@app.get(
+    "/api/recommendations/{user_id}"
+)
 def get_recommendations(
-    request: RecommendationPredictionInput
+    user_id: int,
+    top_k: int = 10
 ):
 
-    params = {
-        "user_id": request.user_id,
-
-        "items": [
-            item.model_dump()
-            for item in request.items
-        ],
-
-        "top_k": request.top_k
-    }
-
-    result = app.handler.handle(
-        params
+    result = (
+        app.handler.get_recommendations(
+            user_id=user_id,
+            top_k=top_k
+        )
     )
-
-    # ----------------------------------------------
-    # Prometheus
-    # ----------------------------------------------
 
     for recommendation in result.get(
         "recommendations",

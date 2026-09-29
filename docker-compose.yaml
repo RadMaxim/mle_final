@@ -100,6 +100,13 @@ services:
     ports:
       - "${APP_PORT}:${APP_PORT}"
     hostname: sprint3
+    volumes:
+      - ./candidates_result.parquet:/app/candidates_result.parquet:ro
+      - ./parquet_cleaned/events.parquet:/app/events.parquet:ro
+
+    environment:
+      CANDIDATES_PATH: /app/candidates_result.parquet
+      EVENTS_PATH: /app/events.parquet
   prometheus:
     image: prom/prometheus
     env_file:

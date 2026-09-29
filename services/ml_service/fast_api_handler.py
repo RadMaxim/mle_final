@@ -1,6 +1,9 @@
 from pathlib import Path
+import os
 
+import duckdb
 import pandas as pd
+
 from catboost import CatBoostRanker
 
 
@@ -10,6 +13,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class FastApiHandler:
 
     def __init__(self):
+
+        # --------------------------------------------------
+        # Модель
+        # --------------------------------------------------
 
         self.model_path = (
             BASE_DIR
@@ -28,6 +35,34 @@ class FastApiHandler:
             f"{self.model_path}"
         )
 
+        # --------------------------------------------------
+        # Пути к данным
+        # --------------------------------------------------
+
+        self.candidates_path = os.getenv(
+            "CANDIDATES_PATH",
+            "/app/candidates_result.parquet"
+        )
+
+        self.events_path = os.getenv(
+            "EVENTS_PATH",
+            "/app/events.parquet"
+        )
+
+        print(
+            f"Candidates path: "
+            f"{self.candidates_path}"
+        )
+
+        print(
+            f"Events path: "
+            f"{self.events_path}"
+        )
+
+        # --------------------------------------------------
+        # Признаки модели
+        # --------------------------------------------------
+
         self.features = [
             "als_score",
             "als_rank",
@@ -38,44 +73,75 @@ class FastApiHandler:
         ]
 
 
-    def handle(
+    def get_recommendations(
         self,
-        params: dict
+        user_id: int,
+        top_k: int = 10
     ) -> dict:
 
         try:
 
-            user_id = params["user_id"]
-            items = params["items"]
-            top_k = params["top_k"]
+            # --------------------------------------------------
+            # Получаем кандидатов пользователя
+            #
+            # При этом исключаем товары, которые пользователь
+            # уже купил (event = transaction)
+            # --------------------------------------------------
 
-            if not items:
+            candidates = duckdb.sql(
+                """
+                SELECT
+                    c.item_id,
+                    c.als_score,
+                    c.als_rank,
+                    c.similarity_score,
+                    c.similarity_rank,
+                    c.popular_score,
+                    c.popular_rank
+                FROM read_parquet(?) AS c
+                WHERE c.user_id = ?
+                  AND c.item_id NOT IN (
+                      SELECT DISTINCT
+                          e.itemid
+                      FROM read_parquet(?) AS e
+                      WHERE e.visitorid = ?
+                        AND e.event = 'transaction'
+                  )
+                """,
+                params=[
+                    self.candidates_path,
+                    user_id,
+                    self.events_path,
+                    user_id
+                ]
+            ).df()
+
+            # --------------------------------------------------
+            # Если кандидатов нет
+            # --------------------------------------------------
+
+            if candidates.empty:
+
                 return {
                     "user_id": user_id,
                     "recommendations": []
                 }
 
-            # ------------------------------------------
-            # Создаём DataFrame кандидатов
-            # ------------------------------------------
-
-            candidates = pd.DataFrame(
-                items
-            )
-
-            # ------------------------------------------
+            # --------------------------------------------------
             # Предсказание CatBoostRanker
-            # ------------------------------------------
+            # --------------------------------------------------
 
             candidates["score"] = (
                 self.model.predict(
-                    candidates[self.features]
+                    candidates[
+                        self.features
+                    ]
                 )
             )
 
-            # ------------------------------------------
-            # Сортируем кандидатов
-            # ------------------------------------------
+            # --------------------------------------------------
+            # Сортировка и Top-K
+            # --------------------------------------------------
 
             candidates = (
                 candidates
@@ -84,20 +150,22 @@ class FastApiHandler:
                     ascending=False
                 )
                 .head(top_k)
-                .reset_index(drop=True)
+                .reset_index(
+                    drop=True
+                )
             )
 
-            # ------------------------------------------
-            # Добавляем rank
-            # ------------------------------------------
+            # --------------------------------------------------
+            # Rank
+            # --------------------------------------------------
 
             candidates["rank"] = (
                 candidates.index + 1
             )
 
-            # ------------------------------------------
+            # --------------------------------------------------
             # Формируем ответ
-            # ------------------------------------------
+            # --------------------------------------------------
 
             recommendations = (
                 candidates[
@@ -124,6 +192,5 @@ class FastApiHandler:
             )
 
             return {
-                "Error":
-                "Problem with request"
+                "Error": str(e)
             }
