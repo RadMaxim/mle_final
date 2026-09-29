@@ -1,10 +1,26 @@
-# params.yaml
-name_csv: 'initial_data.csv'
-name_db_first_dag: 'data_combined'
-name_db_second_dag: 'data_combined_after_transform'
-one_hot_drop: 'if_binary'
-auto_class_weights: 'Balanced'
-n_splits: 5
-metrics: ['RMSE', 'MAPE']
-n_jobs: -1
-target: "price"
+paths:
+  raw_dir: /opt/airflow/data/raw
+  parquet_dir: /opt/airflow/data/parquet
+  cleaned_dir: /opt/airflow/data/cleaned
+
+preprocessing:
+  constant_properties:
+    - "159"
+    - "112"
+    - "764"
+
+  parquet_compression: SNAPPY
+
+s3:
+  endpoint_url: https://storage.yandexcloud.net
+  data_prefix: recsys/data
+
+  files:
+    events: events.parquet
+    item_properties: item_properties.parquet
+    category_tree: category_tree.parquet
+
+airflow:
+  owner: mle-user
+  retries: 2
+  retry_delay_minutes: 2

@@ -1,246 +1,666 @@
-from __future__ import annotations
-
+from datetime import datetime, timedelta
+from pathlib import Path
 import os
-import shutil
-from datetime import datetime
+
+import boto3
+import duckdb
+import yaml
 
 from airflow.decorators import dag, task
 
-BASE_DIR = "/opt/airflow/data"
-ARCHIVE_DIR = f"{BASE_DIR}/archive"
-PARQUET_DIR = f"{BASE_DIR}/parquet"
-OPTIMIZED_DIR = f"{BASE_DIR}/parquet_optimized"
-EDA_DIR = f"{BASE_DIR}/eda"
-CLEANED_DIR = f"{BASE_DIR}/parquet_cleaned"
 
+# --------------------------------------------------
+# Загружаем параметры pipeline
+#
+# На хосте:
+#   ./params.yaml
+#
+# В Airflow-контейнере:
+#   /opt/airflow/params.yaml
+# --------------------------------------------------
+
+PARAMS_PATH = Path("/opt/airflow/params.yaml")
+
+
+if not PARAMS_PATH.exists():
+    raise FileNotFoundError(
+        f"Файл параметров не найден: {PARAMS_PATH}"
+    )
+
+
+with PARAMS_PATH.open(
+    "r",
+    encoding="utf-8"
+) as file:
+
+    params = yaml.safe_load(file)
+
+
+# --------------------------------------------------
+# Пути внутри Airflow-контейнера
+# --------------------------------------------------
+
+RAW_DIR = Path(
+    params["paths"]["raw_dir"]
+)
+
+PARQUET_DIR = Path(
+    params["paths"]["parquet_dir"]
+)
+
+CLEANED_DIR = Path(
+    params["paths"]["cleaned_dir"]
+)
+
+
+# --------------------------------------------------
+# Параметры preprocessing
+# --------------------------------------------------
+
+CONSTANT_PROPERTIES = (
+    params["preprocessing"][
+        "constant_properties"
+    ]
+)
+
+PARQUET_COMPRESSION = (
+    params["preprocessing"][
+        "parquet_compression"
+    ]
+)
+
+
+# --------------------------------------------------
+# S3
+# --------------------------------------------------
+
+S3_ENDPOINT_URL = (
+    params["s3"]["endpoint_url"]
+)
+
+S3_DATA_PREFIX = (
+    params["s3"]["data_prefix"]
+)
+
+S3_FILES = (
+    params["s3"]["files"]
+)
+
+
+# --------------------------------------------------
+# Airflow
+# --------------------------------------------------
+
+default_args = {
+
+    "owner": (
+        params["airflow"]["owner"]
+    ),
+
+    "retries": (
+        params["airflow"]["retries"]
+    ),
+
+    "retry_delay": timedelta(
+        minutes=params["airflow"][
+            "retry_delay_minutes"
+        ]
+    ),
+}
+
+
+# --------------------------------------------------
+# DAG
+# --------------------------------------------------
 
 @dag(
     dag_id="recsys_data_pipeline",
-    description="CSV -> Parquet -> optimized -> EDA tables -> cleaned",
+    description=(
+        "Подготовка исходных данных "
+        "рекомендательной системы"
+    ),
+    default_args=default_args,
+    start_date=datetime(2026, 9, 1),
     schedule=None,
-    start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["recsys", "preprocessing", "eda"],
+    tags=[
+        "recsys",
+        "preprocessing"
+    ],
 )
 def recsys_data_pipeline():
 
-    @task()
-    def csv_to_parquet():
-        import gc
-        import pandas as pd
 
-        os.makedirs(PARQUET_DIR, exist_ok=True)
+    # --------------------------------------------------
+    # 1. Проверяем наличие исходных данных
+    # --------------------------------------------------
 
-        for name in [
+    @task
+    def check_raw_data():
+
+        required_files = [
+            "category_tree.csv",
+            "events.csv",
+            "item_properties_part1.csv",
+            "item_properties_part2.csv",
+        ]
+
+        for file_name in required_files:
+
+            path = (
+                RAW_DIR
+                / file_name
+            )
+
+            if not path.exists():
+
+                raise FileNotFoundError(
+                    f"Не найден входной файл: {path}"
+                )
+
+            print(
+                f"{file_name}: "
+                f"{path.stat().st_size / 1024**2:.2f} MB"
+            )
+
+        print(
+            "Все исходные файлы найдены."
+        )
+
+
+    # --------------------------------------------------
+    # 2. CSV -> Parquet
+    # --------------------------------------------------
+
+    @task
+    def convert_to_parquet():
+
+        PARQUET_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        files = [
             "category_tree",
             "events",
             "item_properties_part1",
             "item_properties_part2",
-        ]:
-            src = f"{ARCHIVE_DIR}/{name}.csv"
-            dst = f"{PARQUET_DIR}/{name}.parquet"
-
-            if not os.path.exists(src):
-                raise FileNotFoundError(src)
-
-            df = pd.read_csv(src)
-            df.to_parquet(dst, index=False)
-
-            del df
-            gc.collect()
-
-    @task()
-    def optimize_types():
-        import gc
-        import pandas as pd
-
-        os.makedirs(OPTIMIZED_DIR, exist_ok=True)
-
-        df = pd.read_parquet(f"{PARQUET_DIR}/category_tree.parquet")
-        df["categoryid"] = df["categoryid"].astype("int16")
-        df["parentid"] = df["parentid"].astype("Int16")
-        df.to_parquet(f"{OPTIMIZED_DIR}/category_tree.parquet", index=False)
-        del df
-        gc.collect()
-
-        df = pd.read_parquet(f"{PARQUET_DIR}/events.parquet")
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df["visitorid"] = df["visitorid"].astype("int32")
-        df["itemid"] = df["itemid"].astype("int32")
-        df["transactionid"] = df["transactionid"].astype("Int32")
-        df["event"] = df["event"].astype("category")
-        df.to_parquet(f"{OPTIMIZED_DIR}/events.parquet", index=False)
-        del df
-        gc.collect()
-
-        for name in ["item_properties_part1", "item_properties_part2"]:
-            df = pd.read_parquet(f"{PARQUET_DIR}/{name}.parquet")
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            df["itemid"] = df["itemid"].astype("int32")
-            df["property"] = df["property"].astype("category")
-            df.to_parquet(f"{OPTIMIZED_DIR}/{name}.parquet", index=False)
-            del df
-            gc.collect()
-
-    @task()
-    def combine_item_properties():
-        import duckdb
-
-        part1 = f"{OPTIMIZED_DIR}/item_properties_part1.parquet"
-        part2 = f"{OPTIMIZED_DIR}/item_properties_part2.parquet"
-        output = f"{OPTIMIZED_DIR}/item_properties.parquet"
-
-        con = duckdb.connect()
-        con.execute(f"""
-            COPY (
-                SELECT *
-                FROM read_parquet(['{part1}', '{part2}'])
-            )
-            TO '{output}'
-            (FORMAT PARQUET, COMPRESSION SNAPPY)
-        """)
-        con.close()
-
-        os.remove(part1)
-        os.remove(part2)
-
-    @task()
-    def build_eda_tables():
-        import duckdb
-
-        os.makedirs(EDA_DIR, exist_ok=True)
-
-        events_path = f"{OPTIMIZED_DIR}/events.parquet"
-        props_path = f"{OPTIMIZED_DIR}/item_properties.parquet"
-
-        con = duckdb.connect()
-
-        con.execute(f"""
-            COPY (
-                WITH stats AS (
-                    SELECT
-                        property,
-                        COUNT(DISTINCT itemid) AS items_count,
-                        COUNT(DISTINCT value) AS unique_values
-                    FROM read_parquet('{props_path}')
-                    GROUP BY property
-                ),
-                totals AS (
-                    SELECT COUNT(DISTINCT itemid) AS total_items
-                    FROM read_parquet('{props_path}')
-                )
-                SELECT
-                    s.property,
-                    s.items_count,
-                    s.unique_values,
-                    s.items_count * 100.0 / t.total_items AS coverage_percent
-                FROM stats s
-                CROSS JOIN totals t
-                ORDER BY coverage_percent DESC
-            )
-            TO '{EDA_DIR}/property_stats.parquet'
-            (FORMAT PARQUET, COMPRESSION SNAPPY)
-        """)
-
-        con.execute(f"""
-            COPY (
-                SELECT
-                    date_trunc('month', timestamp) AS month,
-                    COUNT(*) AS interactions,
-                    COUNT(DISTINCT visitorid) AS users,
-                    COUNT(DISTINCT itemid) AS items,
-                    COUNT(*) * 1.0
-                        / NULLIF(COUNT(DISTINCT visitorid), 0)
-                        AS interactions_per_user
-                FROM read_parquet('{events_path}')
-                WHERE timestamp >= TIMESTAMP '2015-06-01'
-                  AND timestamp < TIMESTAMP '2015-09-01'
-                GROUP BY 1
-                ORDER BY 1
-            )
-            TO '{EDA_DIR}/monthly_stats.parquet'
-            (FORMAT PARQUET, COMPRESSION SNAPPY)
-        """)
-
-        con.close()
-
-    @task()
-    def build_cleaned_data():
-        import duckdb
-
-        os.makedirs(CLEANED_DIR, exist_ok=True)
-
-        events_path = f"{OPTIMIZED_DIR}/events.parquet"
-        props_path = f"{OPTIMIZED_DIR}/item_properties.parquet"
-        category_tree_path = f"{OPTIMIZED_DIR}/category_tree.parquet"
-        property_stats_path = f"{EDA_DIR}/property_stats.parquet"
-
-        con = duckdb.connect()
-
-        con.execute(f"""
-            COPY (
-                SELECT DISTINCT *
-                FROM read_parquet('{events_path}')
-            )
-            TO '{CLEANED_DIR}/events.parquet'
-            (FORMAT PARQUET, COMPRESSION SNAPPY)
-        """)
-
-        con.execute(f"""
-            COPY (
-                SELECT p.*
-                FROM read_parquet('{props_path}') p
-                LEFT JOIN (
-                    SELECT property
-                    FROM read_parquet('{property_stats_path}')
-                    WHERE coverage_percent = 100
-                      AND unique_values = 1
-                ) c
-                USING (property)
-                WHERE c.property IS NULL
-            )
-            TO '{CLEANED_DIR}/item_properties.parquet'
-            (FORMAT PARQUET, COMPRESSION SNAPPY)
-        """)
-
-        con.execute(f"""
-            COPY (
-                SELECT *
-                FROM read_parquet('{category_tree_path}')
-            )
-            TO '{CLEANED_DIR}/category_tree.parquet'
-            (FORMAT PARQUET, COMPRESSION SNAPPY)
-        """)
-
-        con.close()
-
-    @task()
-    def cleanup_intermediate():
-        required_files = [
-            f"{CLEANED_DIR}/events.parquet",
-            f"{CLEANED_DIR}/item_properties.parquet",
-            f"{CLEANED_DIR}/category_tree.parquet",
         ]
 
+        con = duckdb.connect()
+
+        try:
+
+            for name in files:
+
+                input_path = (
+                    RAW_DIR
+                    / f"{name}.csv"
+                )
+
+                output_path = (
+                    PARQUET_DIR
+                    / f"{name}.parquet"
+                )
+
+                con.execute(
+                    f"""
+                    COPY (
+                        SELECT *
+                        FROM read_csv_auto(
+                            '{input_path}',
+                            header=true
+                        )
+                    )
+                    TO '{output_path}'
+                    (
+                        FORMAT PARQUET,
+                        COMPRESSION {PARQUET_COMPRESSION}
+                    )
+                    """
+                )
+
+                print(
+                    f"Создан: {output_path}"
+                )
+
+        finally:
+
+            con.close()
+
+
+    # --------------------------------------------------
+    # 3. Очистка events
+    # --------------------------------------------------
+
+    @task
+    def clean_events():
+
+        CLEANED_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        source = (
+            PARQUET_DIR
+            / "events.parquet"
+        )
+
+        destination = (
+            CLEANED_DIR
+            / S3_FILES["events"]
+        )
+
+        con = duckdb.connect()
+
+        try:
+
+            con.execute(
+                f"""
+                COPY (
+                    SELECT DISTINCT
+
+                        to_timestamp(
+                            timestamp / 1000.0
+                        ) AS timestamp,
+
+                        CAST(
+                            visitorid AS INTEGER
+                        ) AS visitorid,
+
+                        event,
+
+                        CAST(
+                            itemid AS INTEGER
+                        ) AS itemid,
+
+                        CAST(
+                            transactionid AS INTEGER
+                        ) AS transactionid
+
+                    FROM read_parquet(
+                        '{source}'
+                    )
+                )
+                TO '{destination}'
+                (
+                    FORMAT PARQUET,
+                    COMPRESSION {PARQUET_COMPRESSION}
+                )
+                """
+            )
+
+        finally:
+
+            con.close()
+
+        print(
+            f"events сохранён: "
+            f"{destination}"
+        )
+
+
+    # --------------------------------------------------
+    # 4. Очистка category_tree
+    # --------------------------------------------------
+
+    @task
+    def clean_category_tree():
+
+        CLEANED_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        source = (
+            PARQUET_DIR
+            / "category_tree.parquet"
+        )
+
+        destination = (
+            CLEANED_DIR
+            / S3_FILES["category_tree"]
+        )
+
+        con = duckdb.connect()
+
+        try:
+
+            con.execute(
+                f"""
+                COPY (
+                    SELECT
+
+                        CAST(
+                            categoryid AS SMALLINT
+                        ) AS categoryid,
+
+                        CAST(
+                            parentid AS SMALLINT
+                        ) AS parentid
+
+                    FROM read_parquet(
+                        '{source}'
+                    )
+                )
+                TO '{destination}'
+                (
+                    FORMAT PARQUET,
+                    COMPRESSION {PARQUET_COMPRESSION}
+                )
+                """
+            )
+
+        finally:
+
+            con.close()
+
+        print(
+            f"category_tree сохранён: "
+            f"{destination}"
+        )
+
+
+    # --------------------------------------------------
+    # 5. Очистка item_properties
+    # --------------------------------------------------
+
+    @task
+    def clean_item_properties():
+
+        CLEANED_DIR.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        part1 = (
+            PARQUET_DIR
+            / "item_properties_part1.parquet"
+        )
+
+        part2 = (
+            PARQUET_DIR
+            / "item_properties_part2.parquet"
+        )
+
+        destination = (
+            CLEANED_DIR
+            / S3_FILES["item_properties"]
+        )
+
+        constants = ", ".join(
+            f"'{value}'"
+            for value in CONSTANT_PROPERTIES
+        )
+
+        con = duckdb.connect()
+
+        try:
+
+            con.execute(
+                f"""
+                COPY (
+                    SELECT
+
+                        to_timestamp(
+                            timestamp / 1000.0
+                        ) AS timestamp,
+
+                        CAST(
+                            itemid AS INTEGER
+                        ) AS itemid,
+
+                        property,
+                        value
+
+                    FROM (
+
+                        SELECT *
+                        FROM read_parquet(
+                            '{part1}'
+                        )
+
+                        UNION ALL
+
+                        SELECT *
+                        FROM read_parquet(
+                            '{part2}'
+                        )
+                    )
+
+                    WHERE property NOT IN (
+                        {constants}
+                    )
+                )
+                TO '{destination}'
+                (
+                    FORMAT PARQUET,
+                    COMPRESSION {PARQUET_COMPRESSION}
+                )
+                """
+            )
+
+        finally:
+
+            con.close()
+
+        print(
+            f"item_properties сохранён: "
+            f"{destination}"
+        )
+
+
+    # --------------------------------------------------
+    # 6. Проверка итоговых данных
+    # --------------------------------------------------
+
+    @task
+    def validate_cleaned_data():
+
+        files = {
+
+            "events": (
+                CLEANED_DIR
+                / S3_FILES["events"]
+            ),
+
+            "item_properties": (
+                CLEANED_DIR
+                / S3_FILES["item_properties"]
+            ),
+
+            "category_tree": (
+                CLEANED_DIR
+                / S3_FILES["category_tree"]
+            ),
+        }
+
+        con = duckdb.connect()
+
+        try:
+
+            for name, path in files.items():
+
+                if not path.exists():
+
+                    raise FileNotFoundError(
+                        f"Не создан файл: {path}"
+                    )
+
+                rows = con.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM read_parquet(
+                        '{path}'
+                    )
+                    """
+                ).fetchone()[0]
+
+                if rows == 0:
+
+                    raise ValueError(
+                        f"{name} пустой"
+                    )
+
+                print(
+                    f"{name}: "
+                    f"{rows:,} строк"
+                )
+
+        finally:
+
+            con.close()
+
+
+    # --------------------------------------------------
+    # 7. Загрузка в S3
+    # --------------------------------------------------
+
+    @task
+    def upload_to_s3():
+
+        # Секреты НЕ находятся в params.yaml.
+        # Они приходят через .env -> docker compose.
+
+        bucket_name = os.getenv(
+            "S3_BUCKET_NAME"
+        )
+
+        access_key = os.getenv(
+            "AWS_ACCESS_KEY_ID"
+        )
+
+        secret_key = os.getenv(
+            "AWS_SECRET_ACCESS_KEY"
+        )
+
+
+        # ----------------------------------------------
+        # Проверяем переменные окружения
+        # ----------------------------------------------
+
+        required_env = {
+
+            "S3_BUCKET_NAME":
+                bucket_name,
+
+            "AWS_ACCESS_KEY_ID":
+                access_key,
+
+            "AWS_SECRET_ACCESS_KEY":
+                secret_key,
+        }
+
         missing = [
-            p for p in required_files
-            if not os.path.exists(p) or os.path.getsize(p) == 0
+            name
+            for name, value
+            in required_env.items()
+            if not value
         ]
 
         if missing:
-            raise RuntimeError(f"Не удаляю промежуточные данные: {missing}")
 
-        shutil.rmtree(PARQUET_DIR, ignore_errors=True)
-        shutil.rmtree(OPTIMIZED_DIR, ignore_errors=True)
+            raise RuntimeError(
+                "Не заданы переменные окружения: "
+                + ", ".join(missing)
+            )
 
-    t1 = csv_to_parquet()
-    t2 = optimize_types()
-    t3 = combine_item_properties()
-    t4 = build_eda_tables()
-    t5 = build_cleaned_data()
-    t6 = cleanup_intermediate()
 
-    t1 >> t2 >> t3 >> t4 >> t5 >> t6
+        # ----------------------------------------------
+        # S3 client
+        # ----------------------------------------------
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=S3_ENDPOINT_URL,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+
+
+        # ----------------------------------------------
+        # Файлы для загрузки
+        # ----------------------------------------------
+
+        files = {
+
+            S3_FILES["events"]:
+                f"{S3_DATA_PREFIX}/"
+                f"{S3_FILES['events']}",
+
+            S3_FILES["item_properties"]:
+                f"{S3_DATA_PREFIX}/"
+                f"{S3_FILES['item_properties']}",
+
+            S3_FILES["category_tree"]:
+                f"{S3_DATA_PREFIX}/"
+                f"{S3_FILES['category_tree']}",
+        }
+
+
+        # ----------------------------------------------
+        # Upload
+        # ----------------------------------------------
+
+        for local_name, s3_key in files.items():
+
+            local_path = (
+                CLEANED_DIR
+                / local_name
+            )
+
+            s3.upload_file(
+                str(local_path),
+                bucket_name,
+                s3_key
+            )
+
+            print(
+                f"Загружено: "
+                f"s3://{bucket_name}/{s3_key}"
+            )
+
+
+    # --------------------------------------------------
+    # Граф зависимостей
+    # --------------------------------------------------
+
+    raw_check = check_raw_data()
+
+    parquet = convert_to_parquet()
+
+    events = clean_events()
+
+    categories = (
+        clean_category_tree()
+    )
+
+    properties = (
+        clean_item_properties()
+    )
+
+    validation = (
+        validate_cleaned_data()
+    )
+
+    upload = upload_to_s3()
+
+
+    raw_check >> parquet
+
+    parquet >> [
+        events,
+        categories,
+        properties,
+    ]
+
+    [
+        events,
+        categories,
+        properties,
+    ] >> validation
+
+    validation >> upload
 
 
 recsys_data_pipeline()
