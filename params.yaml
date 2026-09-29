@@ -18,6 +18,7 @@ s3:
 
   data_prefix: recsys/data
   recommendations_prefix: recsys/recommendations
+  candidates_prefix: recsys/candidates
 
   files:
     events: events.parquet
@@ -41,6 +42,17 @@ recommendations:
   similar_batch_size: 20000
 
 
+candidates:
+  work_dir: /opt/airflow/data/candidates
+
+  history_items_per_user: 10
+  similar_top_n: 50
+  popular_top_n: 10
+
+  row_group_size: 250000
+  min_valid_size: 1024
+
+
 als:
   factors: 32
   regularization: 0.05
@@ -57,4 +69,6 @@ split:
 
 mlflow:
   tracking_uri: http://mlflow:5000
-  experiment_name: recsys_als
+
+  als_experiment_name: recsys_als
+  candidates_experiment_name: recsys_candidates

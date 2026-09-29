@@ -158,7 +158,7 @@ MLFLOW_TRACKING_URI = params[
 
 MLFLOW_EXPERIMENT = params[
     "mlflow"
-]["experiment_name"]
+]["als_experiment_name"]
 
 
 # ============================================================
