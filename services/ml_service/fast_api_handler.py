@@ -1,6 +1,7 @@
-from catboost import CatBoostRanker
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
+from catboost import CatBoostRanker
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,10 +24,11 @@ class FastApiHandler:
         )
 
         print(
-            f"Model loaded: {self.model_path}"
+            f"Model successfully loaded: "
+            f"{self.model_path}"
         )
 
-        self.required_model_params = [
+        self.features = [
             "als_score",
             "als_rank",
             "similarity_score",
@@ -36,35 +38,6 @@ class FastApiHandler:
         ]
 
 
-    def validate_params(
-        self,
-        params: dict
-    ) -> bool:
-
-        if "user_id" not in params:
-            return False
-
-        if "model_params" not in params:
-            return False
-
-        model_params = params[
-            "model_params"
-        ]
-
-        if not isinstance(
-            model_params,
-            dict
-        ):
-            return False
-
-        if set(model_params.keys()) != set(
-            self.required_model_params
-        ):
-            return False
-
-        return True
-
-
     def handle(
         self,
         params: dict
@@ -72,32 +45,76 @@ class FastApiHandler:
 
         try:
 
-            if not self.validate_params(
-                params
-            ):
+            user_id = params["user_id"]
+            items = params["items"]
+            top_k = params["top_k"]
+
+            if not items:
                 return {
-                    "Error":
-                    "Problem with parameters"
+                    "user_id": user_id,
+                    "recommendations": []
                 }
 
-            user_id = params["user_id"]
+            # ------------------------------------------
+            # Создаём DataFrame кандидатов
+            # ------------------------------------------
 
-            model_params = params[
-                "model_params"
-            ]
-
-            X = pd.DataFrame(
-                [model_params],
-                columns=self.required_model_params
+            candidates = pd.DataFrame(
+                items
             )
 
-            prediction = float(
-                self.model.predict(X)[0]
+            # ------------------------------------------
+            # Предсказание CatBoostRanker
+            # ------------------------------------------
+
+            candidates["score"] = (
+                self.model.predict(
+                    candidates[self.features]
+                )
+            )
+
+            # ------------------------------------------
+            # Сортируем кандидатов
+            # ------------------------------------------
+
+            candidates = (
+                candidates
+                .sort_values(
+                    "score",
+                    ascending=False
+                )
+                .head(top_k)
+                .reset_index(drop=True)
+            )
+
+            # ------------------------------------------
+            # Добавляем rank
+            # ------------------------------------------
+
+            candidates["rank"] = (
+                candidates.index + 1
+            )
+
+            # ------------------------------------------
+            # Формируем ответ
+            # ------------------------------------------
+
+            recommendations = (
+                candidates[
+                    [
+                        "item_id",
+                        "score",
+                        "rank"
+                    ]
+                ]
+                .to_dict(
+                    orient="records"
+                )
             )
 
             return {
                 "user_id": user_id,
-                "score": prediction
+                "recommendations": recommendations
             }
 
         except Exception as e:

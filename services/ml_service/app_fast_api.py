@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from ml_service.fast_api_handler import FastApiHandler
-from ml_service.RecommendationPredictionInput import (
+from ml_service.recommendation_prediction_input import (
     RecommendationPredictionInput
 )
 
@@ -48,32 +48,39 @@ app.handler = FastApiHandler()
 
 
 # --------------------------------------------------
-# Prediction endpoint
+# Recommendation endpoint
 # --------------------------------------------------
 
 @app.post("/api/recommendation/")
-def get_prediction_for_item(
+def get_recommendations(
     request: RecommendationPredictionInput
 ):
 
     params = {
         "user_id": request.user_id,
-        "model_params": (
-            request.model_params.model_dump()
-        )
+
+        "items": [
+            item.model_dump()
+            for item in request.items
+        ],
+
+        "top_k": request.top_k
     }
 
-    pred = app.handler.handle(
+    result = app.handler.handle(
         params
     )
 
-    prediction_value = pred.get(
-        "score",
-        0.0
-    )
+    # ----------------------------------------------
+    # Prometheus
+    # ----------------------------------------------
 
-    ranker_predictions.observe(
-        prediction_value
-    )
+    for recommendation in result.get(
+        "recommendations",
+        []
+    ):
+        ranker_predictions.observe(
+            recommendation["score"]
+        )
 
-    return pred
+    return result
