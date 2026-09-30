@@ -1078,116 +1078,17 @@ def recsys_candidates_pipeline():
     def log_mlflow(
         metrics: dict,
     ):
+        import mlflow
 
-        # ----------------------------------------------------
-        # Найти experiment
-        # ----------------------------------------------------
-
-        response = requests.get(
-            (
-                f"{MLFLOW_TRACKING_URI}"
-                "/api/2.0/mlflow/"
-                "experiments/get-by-name"
-            ),
-            params={
-                "experiment_name":
-                    MLFLOW_EXPERIMENT
-            },
-            timeout=30,
+        mlflow.set_tracking_uri(
+            MLFLOW_TRACKING_URI
         )
 
-
-        if response.status_code == 200:
-
-            experiment_id = (
-                response.json()[
-                    "experiment"
-                ][
-                    "experiment_id"
-                ]
-            )
-
-        else:
-
-            # ----------------------------------------------
-            # Создать experiment
-            # ----------------------------------------------
-
-            response = requests.post(
-                (
-                    f"{MLFLOW_TRACKING_URI}"
-                    "/api/2.0/mlflow/"
-                    "experiments/create"
-                ),
-                json={
-                    "name":
-                        MLFLOW_EXPERIMENT
-                },
-                timeout=30,
-            )
-
-            response.raise_for_status()
-
-            experiment_id = (
-                response.json()[
-                    "experiment_id"
-                ]
-            )
-
-
-        # ----------------------------------------------------
-        # Создать run
-        # ----------------------------------------------------
-
-        start_time = int(
-            time.time() * 1000
+        mlflow.set_experiment(
+            MLFLOW_EXPERIMENT
         )
-
-        response = requests.post(
-            (
-                f"{MLFLOW_TRACKING_URI}"
-                "/api/2.0/mlflow/"
-                "runs/create"
-            ),
-            json={
-                "experiment_id":
-                    experiment_id,
-
-                "start_time":
-                    start_time,
-
-                "tags": [
-                    {
-                        "key":
-                            "mlflow.runName",
-
-                        "value":
-                            "candidate_generation",
-                    }
-                ],
-            },
-            timeout=30,
-        )
-
-        response.raise_for_status()
-
-        run_id = (
-            response.json()[
-                "run"
-            ][
-                "info"
-            ][
-                "run_id"
-            ]
-        )
-
-
-        # ----------------------------------------------------
-        # Params
-        # ----------------------------------------------------
 
         params_to_log = {
-
             "history_items_per_user":
                 HISTORY_ITEMS,
 
@@ -1207,59 +1108,25 @@ def recsys_candidates_pipeline():
                 ROW_GROUP_SIZE,
         }
 
+        with mlflow.start_run(
+            run_name="candidate_generation"
+        ):
 
-        # ----------------------------------------------------
-        # Log batch
-        # ----------------------------------------------------
+            mlflow.log_params(
+                params_to_log
+            )
 
-        response = requests.post(
-            (
-                f"{MLFLOW_TRACKING_URI}"
-                "/api/2.0/mlflow/"
-                "runs/log-batch"
-            ),
-            json={
+            mlflow.log_metrics({
+                key: float(value)
+                for key, value
+                in metrics.items()
+            })
 
-                "run_id":
-                    run_id,
-
-                "params": [
-                    {
-                        "key":
-                            key,
-
-                        "value":
-                            str(value),
-                    }
-                    for key, value
-                    in params_to_log.items()
-                ],
-
-                "metrics": [
-                    {
-                        "key":
-                            key,
-
-                        "value":
-                            float(value),
-
-                        "timestamp":
-                            int(
-                                time.time()
-                                * 1000
-                            ),
-
-                        "step":
-                            0,
-                    }
-                    for key, value
-                    in metrics.items()
-                ],
-            },
-            timeout=30,
-        )
-
-        response.raise_for_status()
+            run_id = (
+                mlflow.active_run()
+                .info
+                .run_id
+            )
 
         print(
             f"MLflow run создан: "

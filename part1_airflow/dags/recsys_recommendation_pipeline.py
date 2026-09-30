@@ -1066,102 +1066,73 @@ def recsys_recommendation_pipeline():
     # ========================================================
 
     @task
-    def log_mlflow(
-        als_stats: dict,
-    ):
+    def log_mlflow(stats: dict):
+
         import mlflow
 
+        tracking_uri = params[
+            "mlflow"
+        ]["tracking_uri"]
+
+        experiment_name = params[
+            "mlflow"
+        ]["als_experiment_name"]
 
         mlflow.set_tracking_uri(
-            MLFLOW_TRACKING_URI
+            tracking_uri
         )
 
         mlflow.set_experiment(
-            MLFLOW_EXPERIMENT
+            experiment_name
         )
 
         with mlflow.start_run(
-            run_name=(
-                "als_recommendation_generation"
-            )
+            run_name="als_recommendation_generation"
         ):
 
-            # ------------------------------------------
-            # ALS params
-            # ------------------------------------------
-
             mlflow.log_params({
 
-                "als_factors":
-                    ALS_FACTORS,
+                "factors":
+                    params["als"]["factors"],
 
-                "als_regularization":
-                    ALS_REGULARIZATION,
+                "regularization":
+                    params["als"]["regularization"],
 
-                "als_alpha":
-                    ALS_ALPHA,
+                "alpha":
+                    params["als"]["alpha"],
 
-                "als_iterations":
-                    ALS_ITERATIONS,
+                "iterations":
+                    params["als"]["iterations"],
 
-                "als_random_state":
-                    ALS_RANDOM_STATE,
+                "random_state":
+                    params["als"]["random_state"],
 
                 "top_n":
-                    TOP_N,
+                    params["recommendations"]["top_n"],
 
                 "similar_n":
-                    SIMILAR_N,
+                    params["recommendations"]["similar_n"],
             })
-
-            # ------------------------------------------
-            # Event weights
-            # ------------------------------------------
-
-            mlflow.log_params({
-
-                "weight_view":
-                    als_stats[
-                        "weight_view"
-                    ],
-
-                "weight_addtocart":
-                    als_stats[
-                        "weight_addtocart"
-                    ],
-
-                "weight_transaction":
-                    als_stats[
-                        "weight_transaction"
-                    ],
-            })
-
-            # ------------------------------------------
-            # Metrics
-            # ------------------------------------------
 
             mlflow.log_metrics({
 
-                "p_cart_given_view":
-                    als_stats[
-                        "p_cart_given_view"
-                    ],
-
                 "train_users":
-                    als_stats[
-                        "train_users"
-                    ],
+                    stats["train_users"],
 
                 "train_items":
-                    als_stats[
-                        "train_items"
-                    ],
+                    stats["train_items"],
 
                 "interactions":
-                    als_stats[
-                        "interactions"
-                    ],
+                    stats["interactions"],
+
+                "p_cart_given_view":
+                    stats["p_cart_given_view"],
             })
+
+        print(
+            f"MLflow run записан "
+            f"в experiment: {experiment_name}"
+        )   
 
 
     # ========================================================

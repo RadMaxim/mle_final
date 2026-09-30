@@ -66,6 +66,11 @@ x-airflow-common:
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+
+    # MLflow / Yandex Object Storage
+    MLFLOW_S3_ENDPOINT_URL: https://storage.yandexcloud.net
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
@@ -101,6 +106,7 @@ services:
 
     environment:
       MLFLOW_S3_ENDPOINT_URL: https://storage.yandexcloud.net
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:5000,localhost:*"
     
 
     ports:

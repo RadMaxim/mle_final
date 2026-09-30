@@ -72,3 +72,26 @@ mlflow:
 
   als_experiment_name: recsys_als
   candidates_experiment_name: recsys_candidates
+  ranker_experiment_name: recsys_ranker
+ranker:
+  work_dir: /opt/airflow/data/ranker
+  iterations: 50
+  depth: 6
+  learning_rate: 0.05
+  loss_function: YetiRank
+  random_seed: 42
+
+  inference_batch_size: 1000000
+  row_group_size: 250000
+
+  positive_events:
+    - addtocart
+    - transaction
+
+  features:
+    - als_score
+    - als_rank
+    - similarity_score
+    - similarity_rank
+    - popular_score
+    - popular_rank

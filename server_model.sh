@@ -18,4 +18,5 @@ mlflow server \
   --default-artifact-root "s3://${S3_BUCKET_NAME}" \
   --no-serve-artifacts \
   --host 0.0.0.0 \
-  --port 5000
+  --port 5000 \
+  --allowed-hosts "mlflow:5000,localhost:*"

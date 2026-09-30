@@ -511,16 +511,19 @@ def recsys_data_pipeline():
 
             con.close()
 
-
-    # --------------------------------------------------
-    # 7. Загрузка в S3
-    # --------------------------------------------------
+# --------------------------------------------------
+# 7. Загрузка в S3
+# --------------------------------------------------
 
     @task
     def upload_to_s3():
 
-        # Секреты НЕ находятся в params.yaml.
-        # Они приходят через .env -> docker compose.
+        from boto3.exceptions import S3UploadFailedError
+        from botocore.exceptions import ClientError
+
+        # --------------------------------------------------
+        # Credentials
+        # --------------------------------------------------
 
         bucket_name = os.getenv(
             "S3_BUCKET_NAME"
@@ -535,12 +538,7 @@ def recsys_data_pipeline():
         )
 
 
-        # ----------------------------------------------
-        # Проверяем переменные окружения
-        # ----------------------------------------------
-
         required_env = {
-
             "S3_BUCKET_NAME":
                 bucket_name,
 
@@ -551,12 +549,14 @@ def recsys_data_pipeline():
                 secret_key,
         }
 
+
         missing = [
             name
             for name, value
             in required_env.items()
             if not value
         ]
+
 
         if missing:
 
@@ -566,9 +566,9 @@ def recsys_data_pipeline():
             )
 
 
-        # ----------------------------------------------
+        # --------------------------------------------------
         # S3 client
-        # ----------------------------------------------
+        # --------------------------------------------------
 
         s3 = boto3.client(
             "s3",
@@ -578,9 +578,9 @@ def recsys_data_pipeline():
         )
 
 
-        # ----------------------------------------------
-        # Файлы для загрузки
-        # ----------------------------------------------
+        # --------------------------------------------------
+        # Files
+        # --------------------------------------------------
 
         files = {
 
@@ -598,9 +598,13 @@ def recsys_data_pipeline():
         }
 
 
-        # ----------------------------------------------
+        # --------------------------------------------------
         # Upload
-        # ----------------------------------------------
+        # --------------------------------------------------
+
+        uploaded = []
+        skipped = []
+
 
         for local_name, s3_key in files.items():
 
@@ -609,17 +613,139 @@ def recsys_data_pipeline():
                 / local_name
             )
 
-            s3.upload_file(
-                str(local_path),
-                bucket_name,
-                s3_key
-            )
 
-            print(
-                f"Загружено: "
-                f"s3://{bucket_name}/{s3_key}"
-            )
+            try:
 
+                s3.upload_file(
+                    str(local_path),
+                    bucket_name,
+                    s3_key,
+                )
+
+
+                uploaded.append(
+                    s3_key
+                )
+
+
+                print(
+                    f"Загружено: "
+                    f"s3://{bucket_name}/{s3_key}"
+                )
+
+
+            except S3UploadFailedError as exc:
+
+                error_message = str(
+                    exc
+                )
+
+
+                if (
+                    "BucketMaxSizeExceeded"
+                    in error_message
+                ):
+
+                    print(
+                        "WARNING: "
+                        "S3 bucket переполнен. "
+                        "Файл не загружен: "
+                        f"{local_path}"
+                    )
+
+                    print(
+                        "Локальный файл сохранён "
+                        "и остаётся доступным "
+                        "для следующих этапов."
+                    )
+
+
+                    skipped.append({
+                        "file":
+                            str(local_path),
+
+                        "s3_key":
+                            s3_key,
+
+                        "reason":
+                            "BucketMaxSizeExceeded",
+                    })
+
+
+                    continue
+
+
+                # Все остальные ошибки загрузки
+                # считаем критичными.
+                raise
+
+
+            except ClientError as exc:
+
+                error_code = (
+                    exc.response
+                    .get("Error", {})
+                    .get("Code")
+                )
+
+
+                if (
+                    error_code
+                    == "BucketMaxSizeExceeded"
+                ):
+
+                    print(
+                        "WARNING: "
+                        "S3 bucket переполнен. "
+                        "Файл не загружен: "
+                        f"{local_path}"
+                    )
+
+
+                    skipped.append({
+                        "file":
+                            str(local_path),
+
+                        "s3_key":
+                            s3_key,
+
+                        "reason":
+                            error_code,
+                    })
+
+
+                    continue
+
+
+                raise
+
+
+        # --------------------------------------------------
+        # Result
+        # --------------------------------------------------
+
+        print(
+            "S3 upload завершён."
+        )
+
+        print(
+            f"Успешно загружено: "
+            f"{len(uploaded)}"
+        )
+
+        print(
+            f"Пропущено: "
+            f"{len(skipped)}"
+        )
+
+
+        return {
+            "uploaded":
+                uploaded,
+
+            "skipped":
+                skipped,
+        }
 
     # --------------------------------------------------
     # Граф зависимостей
